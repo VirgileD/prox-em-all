@@ -1,0 +1,8 @@
+# build output
+/prox-em-all
+
+# local configuration, see config.example.json
+/config.json
+
+# editors
+.idea/

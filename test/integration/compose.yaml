@@ -1,0 +1,67 @@
+# Isolated network for the integration test (see run.sh).
+# prox-em-all runs in the "proxy" container and only touches that container's iptables.
+# The "client" container uses the proxy container as its gateway, to test routed traffic.
+#
+# Containers share the 10.213.0.0/24 network, which prox-em-all never redirects because it is
+# directly attached. The web servers therefore also get an address in 10.99.0.0/24, a "remote"
+# network the other containers reach through an on-link route.
+name: prox-em-all-it
+
+x-web: &web
+  build: { context: ., dockerfile: Dockerfile.services }
+  image: prox-em-all-it-services
+  cap_add: [NET_ADMIN]
+
+services:
+  proxy:
+    build: ../..
+    image: prox-em-all-it
+    cap_add: [NET_ADMIN]
+    sysctls: { net.ipv4.ip_forward: 1, net.ipv4.conf.all.send_redirects: 0 }
+    entrypoint: ["tail", "-f", "/dev/null"]
+    volumes: ["./config.json:/test/config.json:ro"]
+    networks: { test: { ipv4_address: 10.213.0.2 } }
+
+  client: # routes the remote network, DNS server included, through the proxy container
+    <<: *web
+    command: ["sh", "-c", "ip route add 10.99.0.0/24 via 10.213.0.2 && echo 'nameserver 10.99.0.30' > /etc/resolv.conf && exec tail -f /dev/null"]
+    networks: { test: { ipv4_address: 10.213.0.3 } }
+
+  web1: # reached by hostname, through the HTTP proxy
+    <<: *web
+    command: ["sh", "-c", "ip addr add 10.99.0.10/32 dev eth0 && mkdir -p /www && echo web1 > /www/index.html && exec httpd -f -v -p 80 -h /www"]
+    networks: { test: { ipv4_address: 10.213.0.10 } }
+
+  web2: # reached by IP, directly
+    <<: *web
+    command: ["sh", "-c", "ip addr add 10.99.0.11/32 dev eth0 && mkdir -p /www && echo web2 > /www/index.html && exec httpd -f -v -p 80 -h /www"]
+    networks: { test: { ipv4_address: 10.213.0.11 } }
+
+  web3: # reached by CIDR, through the SOCKS5 proxy
+    <<: *web
+    command: ["sh", "-c", "ip addr add 10.99.0.12/32 dev eth0 && mkdir -p /www && echo web3 > /www/index.html && exec httpd -f -v -p 80 -h /www"]
+    networks: { test: { ipv4_address: 10.213.0.12 } }
+
+  httpproxy:
+    <<: *web
+    command: ["sh", "-c", "ip route add 10.99.0.0/24 dev eth0 && exec tinyproxy -d -c /etc/tinyproxy/test.conf"]
+    volumes: ["./tinyproxy.conf:/etc/tinyproxy/test.conf:ro"]
+    dns: [10.213.0.30]
+    networks: { test: { ipv4_address: 10.213.0.20 } }
+
+  socksproxy:
+    <<: *web
+    command: ["sh", "-c", "ip route add 10.99.0.0/24 dev eth0 && exec sockd -f /etc/sockd-test.conf"]
+    volumes: ["./sockd.conf:/etc/sockd-test.conf:ro"]
+    dns: [10.213.0.30]
+    networks: { test: { ipv4_address: 10.213.0.21 } }
+
+  dns:
+    <<: *web
+    command: ["sh", "-c", "ip addr add 10.99.0.30/32 dev eth0 && exec dnsmasq -k --no-resolv --log-queries --log-facility=- --local=/test/ --host-record=web1.test,10.99.0.10"]
+    networks: { test: { ipv4_address: 10.213.0.30 } }
+
+networks:
+  test:
+    ipam:
+      config: [{ subnet: 10.213.0.0/24 }]
