@@ -8,7 +8,7 @@ import (
 )
 
 func TestExampleConfigIsValid(t *testing.T) {
-	cfg, err := config.Load("../../config.example.json")
+	cfg, err := config.Load("../../config.example.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

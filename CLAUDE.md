@@ -37,7 +37,8 @@ Never run the binary directly on the host outside a container: it rewrites the h
 - `cmd/prox-em-all/main.go`: flags (`-c`, `-cleanup`, `-version`), wiring, shutdown order
   (signals caught first; listeners up → install rules; on SIGINT/SIGTERM remove rules → close
   listeners). `listenEndpoint` 127.0.0.1 = this host's traffic only, 0.0.0.0 = routed traffic too.
-- `internal/config`: JSON config with defaults and validation (`encoding/json`, unknown fields rejected).
+- `internal/config`: YAML config with defaults and validation (`go.yaml.in/yaml/v3`, unknown fields
+  rejected). `config.example.yaml` comments every setting; `main_test.go` checks it is valid.
 - `internal/rules`: compiles config rules; `Match` returns the first matching rule (nil = direct).
   Hostname regexps are anchored and case-insensitive.
 - `internal/tcpproxy`: accepts redirected connections, dials direct or through proxies
@@ -63,7 +64,8 @@ Never run the binary directly on the host outside a container: it rewrites the h
   debug, failures at warn. Never log proxy passwords: use `url.Redacted()`.
 - Tests: standard `testing` only (no assertion library), table-driven where natural, local fake
   servers instead of network access.
-- IPv4 only. Dependencies: go-iptables, netlink (conntrack), x/net (dnsmessage, ipv4), x/sys.
+- IPv4 only. Dependencies: go-iptables, netlink (conntrack, ip rules), x/net (dnsmessage, ipv4), x/sys,
+  go.yaml.in/yaml/v3.
 - Security-sensitive: hostnames from DNS are untrusted input (see README "Security considerations").
 - Commit messages: conventional prefix (`feat:`, `fix:`, `refactor:`, `test:`, `build:`, `docs:`)
   and a body explaining why.

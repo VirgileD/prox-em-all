@@ -40,11 +40,12 @@ Its own connections carry a firewall mark (`ipTableMark`) so that they are not r
 
 ## Getting started
 
-Write a configuration file, starting from [`config.example.json`](config.example.json):
+Write a configuration file, starting from [`config.example.yaml`](config.example.yaml), which
+comments every setting and shows the various kinds of rules:
 
 ```sh
-cp config.example.json config.json
-$EDITOR config.json
+cp config.example.yaml config.yaml
+$EDITOR config.yaml
 ```
 
 ### With Docker
@@ -52,7 +53,7 @@ $EDITOR config.json
 ```sh
 make image    # or: docker build -t prox-em-all .
 docker run -d --name prox-em-all --network host --cap-add NET_ADMIN \
-    -v "$PWD/config.json:/etc/prox-em-all/config.json:ro" prox-em-all
+    -v "$PWD/config.yaml:/etc/prox-em-all/config.yaml:ro" prox-em-all
 ```
 
 `--network host` is required: the rules must be installed in the host's network namespace.
@@ -64,48 +65,55 @@ With Go 1.27 or later:
 
 ```sh
 make build    # builds ./prox-em-all
-sudo ./prox-em-all -c config.json
+sudo ./prox-em-all -c config.yaml
 ```
 
 ```
 Usage: prox-em-all [-c file] [-cleanup] [-version]
-  -c file     path of the configuration file (default "/etc/prox-em-all/config.json")
+  -c file     path of the configuration file (default "/etc/prox-em-all/config.yaml")
   -cleanup    remove the iptables rules left by a previous run, then exit
   -version    print the version, then exit
 ```
 
 ## Configuration
 
-A JSON file. All settings are optional; unknown settings are rejected.
+A YAML file. All settings are optional; unknown settings are rejected.
+[`config.example.yaml`](config.example.yaml) shows and comments each of them. Configuration files
+written in JSON for earlier versions are still read: JSON is valid YAML.
 
 | Setting | Default | Description |
 |---|---|---|
-| `listenEndpoint` | `"127.0.0.1:3129"` | Address and port the proxy listens on, for TCP and DNS: `127.0.0.1` to proxy the traffic of this host only, `0.0.0.0` to also proxy [routed traffic](#as-a-gateway). |
+| `listenEndpoint` | `127.0.0.1:3129` | Address and port the proxy listens on, for TCP and DNS: `127.0.0.1` to proxy the traffic of this host only, `0.0.0.0` to also proxy [routed traffic](#as-a-gateway). |
 | `proxyPorts` | `[80, 443]` | TCP destination ports to redirect, at most 15. |
 | `ipTableMark` | `5` | Firewall mark of the proxy's own packets. Change it if another tool on the host uses mark 5. |
-| `noProxyList` | `[]` | Networks (CIDR, such as `"192.168.0.0/16"`) to which TCP connections are never redirected. The networks of the host's interfaces, loopback included, are added automatically. DNS queries are redirected whatever their destination. |
+| `noProxyList` | `[]` | Networks (CIDR, such as `192.168.0.0/16`) to which TCP connections are never redirected. The networks of the host's interfaces, loopback included, are added automatically. DNS queries are redirected whatever their destination. |
 | `relayingRedirectResponse` | `true` | When an HTTP proxy answers `CONNECT` with a redirection (3xx), such as a login page, send it to the client instead of trying the next proxy. |
-| `logLevel` | `"info"` | `"debug"`, `"info"`, `"warn"` or `"error"`. Each connection is logged at `debug` level. |
-| `debugEndpoint` | `""` | Address serving [debug information](#monitoring) over HTTP, such as `"127.0.0.1:6060"`. Disabled when empty. |
+| `logLevel` | `info` | `debug`, `info`, `warn` or `error`. Each connection is logged at `debug` level. |
+| `debugEndpoint` | `""` | Address serving [debug information](#monitoring) over HTTP, such as `127.0.0.1:6060`. Disabled when empty. |
 | `wslMirroredNetworking` | `false` | Set it on WSL2 with `networkingMode=mirrored`, see [below](#on-wsl2-with-mirrored-networking). |
 | `rules` | `[]` | Routing rules, see below. |
 
 ### Rules
 
-```json
-"rules": [
-    { "name": "internal services, direct", "destinations": ["10.1.2.3", "10.20.0.0/16", ".*\\.internal\\.example\\.com"], "proxies": [] },
-    { "name": "everything else", "destinations": ["0.0.0.0/0"], "proxies": ["http://user:password@proxy.example.com:3128", "socks5://10.0.0.1:1080"] }
-]
+```yaml
+rules:
+  - name: internal services, direct
+    destinations: [10.1.2.3, 10.20.0.0/16, '.*\.internal\.example\.com']
+    proxies: []
+  - name: everything else
+    destinations: [0.0.0.0/0]
+    proxies: [http://user:password@proxy.example.com:3128, socks5://10.0.0.1:1080]
 ```
 
 - Rules are checked **in order**, and the first one matching the destination applies.
   Destinations matching no rule are connected to **directly**.
 - `destinations` holds IP addresses, CIDR networks, and **regular expressions** matched against the
   **whole** hostname, ignoring case: `.*\.example\.com` matches `www.example.com` but neither
-  `example.com` nor `www.example.com.evil.net`. In JSON, backslashes are written `\\`.
+  `example.com` nor `www.example.com.evil.net`. Write them between single quotes, where YAML keeps
+  backslashes as they are.
 - `proxies` are URLs, `http://` (the default when no scheme is given) or `socks5://`, optionally with
-  credentials. They are tried in order until one accepts the connection; if all fail, the client
+  credentials (percent-encode special characters of passwords, such as `%40` for `@`).
+  They are tried in order until one accepts the connection; if all fail, the client
   connection is closed. An empty list means a direct connection.
 
 Hostnames are only known for addresses the proxy has seen in a DNS answer since it started. Clients
@@ -143,7 +151,7 @@ routed traffic, such as the traffic of Docker containers on bridge networks, is 
 In mirrored networking mode, WSL2 shares `localhost` with Windows: its routing rules send TCP and
 UDP traffic to `127.0.0.1` through Windows. The traffic that iptables redirects to prox-em-all, which
 goes to `127.0.0.1`, would come back from Windows as a new connection whose original destination is
-lost: DNS queries and connections then hang. Set `"wslMirroredNetworking": true` to add two routing
+lost: DNS queries and connections then hang. Set `wslMirroredNetworking: true` to add two routing
 rules, removed on exit like the iptables rules, that keep the traffic to the listen port on Linux:
 
 ```

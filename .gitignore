@@ -1,8 +1,8 @@
 # build output
 /prox-em-all
 
-# local configuration, see config.example.json
-/config.json
+# local configuration, see config.example.yaml
+/config.yaml
 
 # editors
 .idea/

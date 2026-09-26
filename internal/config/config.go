@@ -1,69 +1,71 @@
-// Package config loads and validates the prox-em-all configuration file.
+// Package config loads and validates the prox-em-all configuration file, in YAML.
 package config
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os"
 	"slices"
+
+	"go.yaml.in/yaml/v3"
 )
 
-// Config is the content of the JSON configuration file.
+// Config is the content of the YAML configuration file.
 type Config struct {
 	// ListenEndpoint is the address and port the proxy listens on, for
 	// redirected TCP connections and DNS queries alike. With 127.0.0.1, only
 	// the traffic of this host is redirected; with 0.0.0.0, the traffic routed
 	// through this host is also redirected.
-	ListenEndpoint netip.AddrPort `json:"listenEndpoint"`
+	ListenEndpoint netip.AddrPort `yaml:"listenEndpoint"`
 
 	// ProxyPorts are the TCP destination ports redirected to the proxy.
-	ProxyPorts []uint16 `json:"proxyPorts"`
+	ProxyPorts []uint16 `yaml:"proxyPorts"`
 
 	// IPTableMark is set on the proxy's own packets so that iptables does not
 	// redirect them back to the proxy.
-	IPTableMark int `json:"ipTableMark"`
+	IPTableMark int `yaml:"ipTableMark"`
 
 	// NoProxyList holds networks to which TCP connections are never redirected
 	// to the proxy. The networks of the host's interfaces are added automatically.
-	NoProxyList []netip.Prefix `json:"noProxyList"`
+	NoProxyList []netip.Prefix `yaml:"noProxyList"`
 
 	// RelayingRedirectResponse makes the proxy relay a 3xx answer from an HTTP
 	// upstream proxy (such as a login page) to the client, instead of trying the next proxy.
-	RelayingRedirectResponse bool `json:"relayingRedirectResponse"`
+	RelayingRedirectResponse bool `yaml:"relayingRedirectResponse"`
 
 	// LogLevel is one of "debug", "info", "warn" or "error".
-	LogLevel slog.Level `json:"logLevel"`
+	LogLevel slog.Level `yaml:"logLevel"`
 
 	// DebugEndpoint, when set, is the address serving pprof profiles and
 	// expvar statistics over HTTP, for example "127.0.0.1:6060".
-	DebugEndpoint string `json:"debugEndpoint"`
+	DebugEndpoint string `yaml:"debugEndpoint"`
 
 	// WSLMirroredNetworking must be set on WSL2 with networkingMode=mirrored,
 	// which otherwise sends the traffic redirected to 127.0.0.1 through Windows.
-	WSLMirroredNetworking bool `json:"wslMirroredNetworking"`
+	WSLMirroredNetworking bool `yaml:"wslMirroredNetworking"`
 
 	// Rules decide how each destination is reached. The first matching rule wins,
 	// and destinations matching no rule are connected to directly.
-	Rules []Rule `json:"rules"`
+	Rules []Rule `yaml:"rules"`
 }
 
 // Rule sends the destinations it matches through its proxies.
 type Rule struct {
 	// Name identifies the rule in logs.
-	Name string `json:"name"`
+	Name string `yaml:"name"`
 
 	// Destinations are IP addresses, CIDR networks, or regular expressions
 	// that must match the whole destination hostname.
-	Destinations []string `json:"destinations"`
+	Destinations []string `yaml:"destinations"`
 
 	// Proxies are tried in order until one accepts the connection, for example
 	// "http://user:password@proxy.example.com:3128" or "socks5://10.0.0.1:1080".
 	// An empty list means a direct connection.
-	Proxies []string `json:"proxies"`
+	Proxies []string `yaml:"proxies"`
 }
 
 // Default returns the configuration used for settings missing from the file.
@@ -90,13 +92,14 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// Parse decodes and validates a JSON configuration. Unknown settings are
-// rejected, so that a typo does not silently fall back to a default.
+// Parse decodes and validates a YAML configuration. Unknown settings are
+// rejected, so that a typo does not silently fall back to a default. An empty
+// configuration uses the defaults.
 func Parse(data []byte) (Config, error) {
 	cfg := Default()
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {

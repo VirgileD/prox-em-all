@@ -30,7 +30,7 @@ trap cleanup EXIT
 # start_proxy [CONFIG] waits until prox-em-all has installed its iptables rules.
 start_proxy() {
     installs=$(in_proxy 'grep -ci "installed iptables rules" /tmp/proxy.log || true')
-    compose exec -T --detach proxy sh -c "prox-em-all -c ${1:-/test/config.json} >> /tmp/proxy.log 2>&1"
+    compose exec -T --detach proxy sh -c "prox-em-all -c ${1:-/test/config.yaml} >> /tmp/proxy.log 2>&1"
     for _ in $(seq 50); do
         [ "$(in_proxy 'grep -ci "installed iptables rules" /tmp/proxy.log || true')" -gt "$installs" ] && return
         sleep 0.2
@@ -104,8 +104,8 @@ check "-cleanup removes the rules left by a crash" \
 
 # Listening on 127.0.0.1, only the traffic of the proxy host is redirected. The listen port is
 # also the port of the HTTP upstream proxy, which the proxy must still be able to reach.
-in_proxy "sed 's/0.0.0.0:3129/127.0.0.1:8888/' /test/config.json > /tmp/local.json"
-start_proxy /tmp/local.json
+in_proxy "sed 's/0.0.0.0:3129/127.0.0.1:8888/' /test/config.yaml > /tmp/local.yaml"
+start_proxy /tmp/local.yaml
 expect_route "local mode: hostname rule via a proxy using the listen port number" proxy http://web1.test/ web1 web1 10.213.0.20
 expect_route "local mode: routed traffic is not redirected" client http://10.99.0.11/ web2 web2 10.213.0.3
 stop_proxy TERM
@@ -114,12 +114,12 @@ stop_proxy TERM
 # placed before the "local" table's. Simulate it by sending 127.0.0.1 nowhere.
 in_proxy 'ip rule add pref 2 lookup local && ip rule del pref 0 lookup local'
 in_proxy 'ip route add blackhole 127.0.0.1/32 table 127 && ip rule add pref 1 lookup 127'
-in_proxy "sed 's/0.0.0.0:3129/127.0.0.1:3129/; s/\"logLevel\"/\"wslMirroredNetworking\": true, \"logLevel\"/' /test/config.json > /tmp/wsl.json"
-start_proxy /tmp/wsl.json
+in_proxy "sed 's/0.0.0.0:3129/127.0.0.1:3129/' /test/config.yaml > /tmp/wsl.yaml && echo 'wslMirroredNetworking: true' >> /tmp/wsl.yaml"
+start_proxy /tmp/wsl.yaml
 expect_route "WSL mirrored mode: hostname rule via HTTP proxy" proxy http://web1.test/ web1 web1 10.213.0.20
 stop_proxy TERM
 check "WSL mirrored mode: routing rules removed on exit" '! ip rule | grep -q "to 127.0.0.1"'
-start_proxy /tmp/wsl.json
+start_proxy /tmp/wsl.yaml
 stop_proxy KILL
 check "WSL mirrored mode: -cleanup removes the routing rules left by a crash" \
     'prox-em-all -cleanup && ! ip rule | grep -q "to 127.0.0.1"'

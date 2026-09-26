@@ -1,0 +1,95 @@
+# prox-em-all configuration example.
+#
+# All settings are optional: a setting left out takes the default value given in its comment.
+# Unknown settings are rejected, so that a typo is reported instead of silently ignored.
+# Install it as /etc/prox-em-all/config.yaml, readable by root only: it may hold proxy passwords.
+
+# Address and port the proxy listens on, for the redirected TCP connections and DNS queries.
+# Default: 127.0.0.1:3129
+#   127.0.0.1:<port>  proxy the traffic of this host only
+#   0.0.0.0:<port>    also proxy the traffic of the hosts using this host as their gateway
+#                     (needs IP forwarding: sysctl -w net.ipv4.ip_forward=1)
+listenEndpoint: 127.0.0.1:3129
+
+# TCP destination ports redirected to the proxy, at most 15. Default: [80, 443]
+proxyPorts: [80, 443]
+# proxyPorts: [80, 443, 8080, 8443]    # also alternative web ports
+# proxyPorts: [443]                    # HTTPS only
+
+# Firewall mark of the proxy's own packets, so that they are not redirected again.
+# Change it only if another tool on the host already uses mark 5. Default: 5
+ipTableMark: 5
+
+# Networks (CIDR) to which TCP connections are never redirected. The networks of the host's
+# interfaces, loopback included, are always added. DNS queries are redirected whatever their
+# destination. Default: []
+noProxyList:
+  - 172.16.0.0/12      # Docker networks, even those not created yet
+  # - 10.0.0.0/8       # a whole private network reached without the proxy
+  # - 192.0.2.10/32    # a single address
+
+# When an HTTP upstream proxy answers CONNECT with a redirection (3xx), such as a login page:
+#   true   send it to the client
+#   false  try the next proxy of the rule
+# Default: true
+relayingRedirectResponse: true
+
+# Log level: debug, info, warn or error. Each connection is logged at debug level. Default: info
+logLevel: info
+
+# Address serving counters (/debug/vars) and Go profiles (/debug/pprof/) over HTTP.
+# Keep it on a local address. Default: "" (disabled)
+debugEndpoint: ""
+# debugEndpoint: 127.0.0.1:6060
+
+# Set it on WSL2 with networkingMode=mirrored, which otherwise sends the traffic redirected to
+# 127.0.0.1 through Windows: DNS queries and connections would hang. Default: false
+wslMirroredNetworking: false
+
+# Routing rules, checked in order: the first rule matching the destination of a connection applies.
+# Destinations matching no rule are connected to directly. Default: []
+#
+# destinations: IP addresses, CIDR networks, or regular expressions matched against the whole
+#   hostname, ignoring case. Hostnames are only known for addresses seen in a DNS answer since the
+#   proxy started. Write regular expressions between single quotes, so that YAML keeps the
+#   backslashes as they are.
+# proxies: upstream proxies tried in order until one accepts the connection; if all fail, the
+#   client connection is closed. An empty list, or no proxies at all, means a direct connection.
+#     http://host:port                  HTTP proxy, sent a CONNECT request (the default scheme)
+#     http://user:password@host:port    HTTP proxy with basic authentication
+#     socks5://host:port                SOCKS5 proxy
+#     socks5://user:password@host:port  SOCKS5 proxy with username and password
+#   Percent-encode special characters of a password: "p@ss:word" is written p%40ss%3Aword.
+rules:
+  # Direct connections, by IP address, network and hostname.
+  - name: internal services, direct
+    destinations:
+      - 10.1.2.3                         # an IP address
+      - 10.20.0.0/16                     # a CIDR network
+      - '.*\.internal\.example\.com'     # any host under internal.example.com, but not itself
+      - 'intranet\.example\.com'         # exactly this host
+    proxies: []
+
+  # A single HTTP proxy for some hosts. The scheme can be left out: http is the default.
+  - name: partner network, through the partner proxy
+    destinations: ['.*\.partner\.example\.net', 'partner\.example\.net']
+    proxies: [partner-proxy.example.com:3128]
+
+  # A proxy running on this host, such as Px, cntlm or a VPN client's proxy. On WSL2 with
+  # mirrored networking, 127.0.0.1 also reaches a proxy running on Windows.
+  - name: cloud consoles, through the local proxy
+    destinations: ['(.*\.)?(azure|amazonaws)\.com']
+    proxies: [http://127.0.0.1:9000]
+
+  # A SOCKS5 proxy with authentication, for example an SSH tunnel (ssh -D) or Dante.
+  - name: lab network, through the SOCKS5 proxy
+    destinations: [192.168.100.0/24, '.*\.lab\.example\.org']
+    proxies: [socks5://labuser:secret@10.0.0.1:1080]
+
+  # Everything else: the corporate proxy, then a backup proxy if it does not answer.
+  # Ending with 0.0.0.0/0 also decides the route of addresses whose hostname is unknown.
+  - name: everything else, through the corporate proxies
+    destinations: [0.0.0.0/0]
+    proxies:
+      - http://user:password@proxy.example.com:3128
+      - http://backup-proxy.example.com:8080

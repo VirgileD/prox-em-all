@@ -19,7 +19,7 @@ services:
     cap_add: [NET_ADMIN]
     sysctls: { net.ipv4.ip_forward: 1, net.ipv4.conf.all.send_redirects: 0 }
     entrypoint: ["tail", "-f", "/dev/null"]
-    volumes: ["./config.json:/test/config.json:ro"]
+    volumes: ["./config.yaml:/test/config.yaml:ro"]
     networks: { test: { ipv4_address: 10.213.0.2 } }
 
   client: # routes the remote network, DNS server included, through the proxy container

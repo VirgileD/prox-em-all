@@ -17,4 +17,4 @@ RUN apk add --no-cache iptables
 COPY --from=build /prox-em-all /usr/local/bin/prox-em-all
 
 ENTRYPOINT ["prox-em-all"]
-CMD ["-c", "/etc/prox-em-all/config.json"]
+CMD ["-c", "/etc/prox-em-all/config.yaml"]

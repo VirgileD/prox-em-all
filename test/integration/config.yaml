@@ -1,0 +1,10 @@
+ipTableMark: 5
+listenEndpoint: 0.0.0.0:3129
+proxyPorts: [80]
+noProxyList: [192.0.2.0/24]
+logLevel: debug
+debugEndpoint: 127.0.0.1:6060
+rules:
+  - { name: web2-direct, destinations: [10.99.0.11], proxies: [] }
+  - { name: web1-http, destinations: ['web1\.test'], proxies: [http://10.213.0.20:8888] }
+  - { name: web3-socks, destinations: [10.99.0.12/32], proxies: [socks5://10.213.0.21:1080] }

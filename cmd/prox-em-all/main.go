@@ -33,7 +33,7 @@ import (
 var version = "dev"
 
 func main() {
-	configPath := flag.String("c", "/etc/prox-em-all/config.json", "path of the configuration `file`")
+	configPath := flag.String("c", "/etc/prox-em-all/config.yaml", "path of the configuration `file`")
 	cleanup := flag.Bool("cleanup", false, "remove the iptables rules left by a previous run, then exit")
 	showVersion := flag.Bool("version", false, "print the version, then exit")
 	flag.Usage = func() {
