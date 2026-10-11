@@ -1,5 +1,6 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-STATICCHECK_VERSION := v0.8.1
+# master: v0.8.1 cannot read Go 1.27 export data; go back to a tag once one supports Go 1.27
+STATICCHECK_VERSION := v0.7.0-0.dev.0.20261009230814-452d5bb86b45
 GOVULNCHECK_VERSION := v1.8.0
 
 .PHONY: help build test lint integration-test image clean
