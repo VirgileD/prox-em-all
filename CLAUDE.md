@@ -8,6 +8,8 @@ Guidance for Claude Code when working in this repository.
 iptables REDIRECT rules send TCP connections (configured ports) and DNS queries (UDP 53) to it; it
 forwards each connection directly or through HTTP CONNECT / SOCKS5 upstream proxies chosen by
 ordered rules (IP, CIDR, hostname regexp). Hostnames come from the DNS answers it forwards.
+Optionally, for configured HTTPS servers, it intercepts TLS and replaces placeholder credentials in
+request headers with real ones from a systemd-encrypted credentials file.
 README.md documents behaviour and configuration; keep it in sync with the code.
 
 The owner's priority: **code that is simple to read and maintain**. Prefer plain, explicit code over
@@ -26,7 +28,8 @@ docker run --rm -v "$PWD":/src -w /src --user "$(id -u):$(id -g)" -e HOME=/tmp -
 - `make lint`: gofmt check, go vet, staticcheck, govulncheck (pinned versions in the Makefile)
 - `make integration-test` (runs on the host, needs Docker Compose): end-to-end test in
   `test/integration/`, with real iptables inside containers on an isolated network. Run it after
-  any change to `internal/netfilter`, `internal/tcpproxy`, `internal/dnsproxy` or `cmd/`. It never
+  any change to `internal/netfilter`, `internal/tcpproxy`, `internal/dnsproxy`, `internal/credentials`
+  or `cmd/`. Its test certificates in `test/integration/tls/` are fixtures, not secrets. It never
   touches host iptables. `VERBOSE=1` prints logs.
 - `make image`: Docker image `prox-em-all`, version from `git describe`.
 
@@ -47,6 +50,11 @@ Never run the binary directly on the host outside a container: it rewrites the h
 - `internal/dnsproxy`: UDP forwarder (at most 100 queries at once); replies from the redirected
   address (IP_PKTINFO via `x/net/ipv4`); parses A answers with `x/net/dns/dnsmessage` into the host
   cache, ignoring names with characters other than `[A-Za-z0-9._-]`. expvar counters `dns`.
+- `internal/credentials`: credential injection, active when `$CREDENTIALS_DIRECTORY/credentials`
+  exists (systemd `LoadCredentialEncrypted=`). Reads the SNI from the ClientHello (`ReadClientHello`,
+  bytes replayed), verifies the server's certificate, presents one minted from the CA in the file,
+  then forwards HTTP/1.1 requests one at a time, replacing placeholders in configured headers only.
+  expvar counters `credentials`. `credentials.example.yaml` is checked by `main_test.go`.
 - `internal/hostcache`: bounded IP → hostname map with TTL.
 - `internal/netfilter`: iptables rules in `PROX_EM_ALL_*` chains (installed idempotently, removable
   without the config; `iptables_test.go` lists them), `Dialer` setting SO_MARK, original destination
@@ -61,7 +69,7 @@ Never run the binary directly on the host outside a container: it rewrites the h
   except expvar counters. Functions that need root (iptables, conntrack, SO_MARK) are injected as
   fields so tests can replace them.
 - Logging: `log/slog` with lowercase messages and key/value attributes; per-connection success at
-  debug, failures at warn. Never log proxy passwords: use `url.Redacted()`.
+  debug, failures at warn. Never log proxy passwords (use `url.Redacted()`) nor credential values.
 - Tests: standard `testing` only (no assertion library), table-driven where natural, local fake
   servers instead of network access.
 - IPv4 only. Dependencies: go-iptables, netlink (conntrack, ip rules), x/net (dnsmessage, ipv4), x/sys,

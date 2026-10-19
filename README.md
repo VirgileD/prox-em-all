@@ -7,6 +7,9 @@ SOCKS5 proxies**, chosen by destination IP address, network or hostname.
 Applications need no proxy settings. This is handy in corporate networks where different
 destinations are reachable through different proxies, and for tools that ignore `HTTP_PROXY`.
 
+Optionally, it also [injects credentials](#credential-injection): for configured HTTPS servers, it
+replaces placeholder tokens sent by local tools with the real secrets, which the tools never see.
+
 prox-em-all is based on [go-any-proxy](https://github.com/ryanchapman/go-any-proxy) by Ryan A. Chapman,
 through the [fork by Feng Zhou](https://github.com/feng-zh/go-any-proxy). See [Credits](#credits).
 
@@ -124,6 +127,83 @@ IP and CIDR destinations. End your rules with a `0.0.0.0/0` rule to decide what 
 > Connections to port 80 are also forwarded with `CONNECT`. Some proxies only allow `CONNECT` to
 > port 443 by default, such as Squid with its `SSL_ports` list.
 
+## Credential injection
+
+Local tools can be given **placeholder** credentials, such as `PLACEHOLDER_GITHUB_TOKEN`, instead of
+real ones. For the configured HTTPS servers, prox-em-all decrypts the connection, replaces the
+placeholders in the configured request headers with the real values, and sends the request on to the
+real server. The real secrets stay in a file encrypted at rest, decrypted by systemd for the service
+only. The same pattern is used to keep secrets out of sandboxes and AI agents.
+
+```
+ tool ──TLS, "Bearer PLACEHOLDER"──► prox-em-all ──TLS, "Bearer ghp_real…"──► api.github.com
+       (certificate from your CA)       │           (server certificate verified)
+                                 credentials decrypted by systemd at start
+```
+
+Without a credentials file, nothing is decrypted and requests are not modified.
+
+### Setting it up
+
+1. **Create a CA** for prox-em-all, limited with name constraints to the servers it intercepts, so
+   that its key cannot be used to impersonate other sites:
+
+   ```sh
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+       -subj "/CN=prox-em-all credentials CA" \
+       -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign" \
+       -addext "nameConstraints=critical,permitted;DNS:api.github.com" \
+       -keyout ca.key -out ca.crt
+   ```
+
+   List each server with another `;DNS:name`. Adding a server later means a new CA.
+
+2. **Trust the CA** on the host, for the tools that use the system's certificates
+   (`sudo cp ca.crt /usr/local/share/ca-certificates/prox-em-all.crt && sudo update-ca-certificates`
+   on Debian and Ubuntu). Some tools have their own list: `NODE_EXTRA_CA_CERTS=/path/ca.crt` for
+   Node.js, `REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt` for Python `requests`.
+
+3. **Write the credentials file** from [`credentials.example.yaml`](credentials.example.yaml), with
+   the content of `ca.crt` and `ca.key`, then **encrypt it** and delete the clear files:
+
+   ```sh
+   sudo systemd-creds encrypt --name=credentials credentials.yaml /etc/prox-em-all/credentials.cred
+   shred -u credentials.yaml ca.key
+   ```
+
+   `systemd-creds` encrypts with the TPM2 chip when there is one, else with a key only root can
+   read (`/var/lib/systemd/credential.secret`, as on WSL2). To change the file later, decrypt it
+   with `sudo systemd-creds decrypt --name=credentials /etc/prox-em-all/credentials.cred -`.
+
+4. **Load it in the service** with `LoadCredentialEncrypted=credentials:/etc/prox-em-all/credentials.cred`,
+   as in [`prox-em-all.service`](prox-em-all.service). systemd decrypts it in memory into a directory
+   only the service can read, and gives its path in `$CREDENTIALS_DIRECTORY`, where prox-em-all reads
+   the file `credentials`. The log tells which servers were loaded.
+
+5. **Give the tools the placeholders**, for instance `GITHUB_TOKEN=PLACEHOLDER_GITHUB_TOKEN`.
+
+Do not pass a secret or a key in an `Environment=` line of the unit: unit files and
+`systemctl show` can be read by every user.
+
+Without systemd, such as with Docker, mount a directory holding the file `credentials` and set
+`CREDENTIALS_DIRECTORY` to it: the file is then not encrypted at rest.
+
+### How it behaves
+
+- A connection is intercepted when its destination port is a configured server's port, and the
+  server name of its TLS handshake (SNI) is a configured `host`. The server name is read from the
+  first bytes the client sends, which are then forwarded unchanged to other servers: they are never
+  decrypted. A client that sends nothing first, on such a port, waits up to 5 seconds.
+- The connection to the server goes through the matching [rule](#rules), as any other, and the
+  server's certificate is checked against the system's CAs before any request is sent.
+- Placeholders are only replaced in the configured headers of the configured server. A placeholder
+  elsewhere, in another header, the URL or the body, or sent to another server, is left as it is,
+  and the server rejects it.
+- Intercepted connections use **HTTP/1.1**: clients asking for HTTP/2 fall back to it. Clients that
+  require HTTP/2, such as gRPC, do not work through an intercepted server. WebSocket connections
+  work.
+- The client's `Expect: 100-continue` is answered by prox-em-all, which forwards each request whole.
+
 ## Operations
 
 ### Stopping and cleaning up
@@ -166,8 +246,9 @@ Other traffic to `127.0.0.1`, such as an upstream proxy running on Windows, stil
 When `debugEndpoint` is set, it serves:
 
 - `/debug/vars`: counters of `connections` (`direct`, `proxied`, `redirected`, `failed`,
-  `accept_errors`) and of `dns` queries (`answered`, `failed`, `dropped` when more than 100 are
-  pending, `read_errors`)
+  `accept_errors`), of `dns` queries (`answered`, `failed`, `dropped` when more than 100 are
+  pending, `read_errors`) and of `credentials` (`intercepted` connections, requests whose
+  credentials were `replaced`, `failed` TLS handshakes)
 - `/debug/pprof/`: Go profiles and goroutine dumps
 
 Keep it bound to a local address.
@@ -183,6 +264,10 @@ Keep it bound to a local address.
   host's `INPUT` chain and opened again by the proxy itself, so `FORWARD` rules do not apply to them.
   Restrict which hosts may use the gateway.
 - **The configuration file holds proxy passwords**: make it readable by root only.
+- **Injected credentials can be used, not read.** Any local user who knows a placeholder can send
+  requests to its server with the real credentials. Only configure servers where this is acceptable.
+- **The credentials CA can impersonate the servers it may sign for** to the tools that trust it:
+  limit it with name constraints, and keep its key only in the encrypted credentials file.
 - **The debug endpoint** exposes profiles and internal state: keep it on a local address.
 
 ## Development
@@ -202,14 +287,15 @@ The code is small and split by responsibility:
 | [`internal/config`](internal/config) | Loading and validating the configuration |
 | [`internal/rules`](internal/rules) | Choosing the route of a destination |
 | [`internal/tcpproxy`](internal/tcpproxy) | Forwarding TCP connections, directly or through HTTP and SOCKS5 proxies |
+| [`internal/credentials`](internal/credentials) | Intercepting the TLS connections to configured servers and replacing their credentials |
 | [`internal/dnsproxy`](internal/dnsproxy) | Forwarding DNS queries and learning hostnames |
 | [`internal/hostcache`](internal/hostcache) | IP address to hostname cache |
 | [`internal/netfilter`](internal/netfilter) | iptables rules, firewall mark, original destinations |
 
 The [integration test](test/integration/run.sh) starts prox-em-all in a container on an isolated
 Docker network, with tinyproxy, Dante, dnsmasq and web servers. It checks the routes taken by
-connections from the proxy's container and from a container using it as gateway, and the cleanup of
-the iptables rules. It does not modify the host's iptables.
+connections from the proxy's container and from a container using it as gateway, the credential
+injection with an nginx HTTPS server, and the cleanup of the iptables rules. It does not modify the host's iptables.
 
 ## Credits
 

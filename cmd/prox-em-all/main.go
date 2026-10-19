@@ -9,8 +9,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,10 +20,13 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"syscall"
 
 	"github.com/VirgileD/prox-em-all/internal/config"
+	"github.com/VirgileD/prox-em-all/internal/credentials"
 	"github.com/VirgileD/prox-em-all/internal/dnsproxy"
 	"github.com/VirgileD/prox-em-all/internal/hostcache"
 	"github.com/VirgileD/prox-em-all/internal/netfilter"
@@ -78,6 +83,13 @@ func run(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", configPath, err)
 	}
+	injector, err := loadCredentials()
+	if err != nil {
+		return err
+	}
+	if injector != nil {
+		warnAboutPortsNotRedirected(injector, cfg.ProxyPorts)
+	}
 	hostnames := hostcache.New(65536)
 	dialer := netfilter.Dialer(cfg.IPTableMark)
 
@@ -99,6 +111,7 @@ func run(configPath string) error {
 		Dialer:              dialer,
 		OriginalDestination: netfilter.OriginalDestination,
 		RelayRedirects:      cfg.RelayingRedirectResponse,
+		Injector:            injector,
 	}
 	dnsProxy := &dnsproxy.Server{
 		Hostnames: hostnames,
@@ -144,6 +157,36 @@ func run(configPath string) error {
 		return nil
 	case err := <-stopped:
 		return err
+	}
+}
+
+// loadCredentials loads the credentials file that systemd decrypted for the
+// service (LoadCredentialEncrypted=credentials:...). Without it, requests are
+// not modified.
+func loadCredentials() (*credentials.Injector, error) {
+	directory := os.Getenv("CREDENTIALS_DIRECTORY")
+	if directory == "" {
+		slog.Info("no credentials loaded, requests are not modified")
+		return nil, nil
+	}
+	path := filepath.Join(directory, "credentials")
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		slog.Info("no credentials loaded, requests are not modified", "missing", path)
+		return nil, nil
+	}
+	injector, err := credentials.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("load credentials: %w", err)
+	}
+	slog.Info("loaded credentials", "servers", injector.Hosts())
+	return injector, nil
+}
+
+func warnAboutPortsNotRedirected(injector *credentials.Injector, proxyPorts []uint16) {
+	for _, port := range injector.Ports() {
+		if !slices.Contains(proxyPorts, port) {
+			slog.Warn("credentials are configured for a port that is not in proxyPorts", "port", port)
+		}
 	}
 }
 

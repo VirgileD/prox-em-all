@@ -2,9 +2,16 @@ package tcpproxy
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/pem"
+	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/netip"
@@ -14,6 +21,7 @@ import (
 	"time"
 
 	"github.com/VirgileD/prox-em-all/internal/config"
+	"github.com/VirgileD/prox-em-all/internal/credentials"
 	"github.com/VirgileD/prox-em-all/internal/hostcache"
 	"github.com/VirgileD/prox-em-all/internal/rules"
 )
@@ -24,6 +32,27 @@ var destination = netip.MustParseAddrPort("192.0.2.1:443")
 func TestDirectConnection(t *testing.T) {
 	echo := startEchoServer(t)
 	proxy := startServer(t, &Server{}, echo)
+
+	if got := exchange(t, proxy, "ping"); got != "echo: ping" {
+		t.Errorf("got %q, want %q", got, "echo: ping")
+	}
+}
+
+func TestConnectionNotInterceptedIsForwarded(t *testing.T) {
+	echo := startEchoServer(t)
+	echoPort, _ := strconv.Atoi(echo[strings.LastIndex(echo, ":")+1:])
+	// A server intercepted on the echo server's port: the data sent there is
+	// read as a possible ClientHello first.
+	injector, err := credentials.Parse([]byte(testCA(t) + fmt.Sprintf(`
+servers:
+  - host: intercepted.example.com
+    port: %d
+    replacements: [{ header: Authorization, placeholder: PLACEHOLDER, value: secret }]
+`, echoPort)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := startServer(t, &Server{Injector: injector}, echo)
 
 	if got := exchange(t, proxy, "ping"); got != "echo: ping" {
 		t.Errorf("got %q, want %q", got, "echo: ping")
@@ -141,6 +170,34 @@ func startServer(t *testing.T, s *Server, originalDestination string) string {
 	}
 	go s.Serve(listener)
 	return listener.Addr().String()
+}
+
+// testCA returns the CA settings of a credentials file, with a new CA.
+func testCA(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	certificate, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yamlBlock := func(pemType string, der []byte) string {
+		return strings.ReplaceAll(string(pem.EncodeToMemory(&pem.Block{Type: pemType, Bytes: der})), "\n", "\n  ")
+	}
+	return "caCertificate: |\n  " + yamlBlock("CERTIFICATE", certificate) + "\ncaKey: |\n  " + yamlBlock("PRIVATE KEY", keyDER)
 }
 
 func compileRules(t *testing.T, proxies ...string) []*rules.Rule {

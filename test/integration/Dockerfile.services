@@ -1,3 +1,3 @@
-# Helper services for the integration test: web servers, DNS and upstream proxies.
+# Helper services for the integration test: web servers, DNS, upstream proxies, and an HTTPS client.
 FROM alpine:3.24
-RUN apk add --no-cache busybox-extras dante-server dnsmasq tinyproxy
+RUN apk add --no-cache busybox-extras curl dante-server dnsmasq nginx tinyproxy

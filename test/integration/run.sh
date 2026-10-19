@@ -27,10 +27,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# start_proxy [CONFIG] waits until prox-em-all has installed its iptables rules.
+# start_proxy [CONFIG [ENVIRONMENT]] waits until prox-em-all has installed its iptables rules.
+# ENVIRONMENT holds variable assignments, such as "CREDENTIALS_DIRECTORY=/test/credentials".
 start_proxy() {
     installs=$(in_proxy 'grep -ci "installed iptables rules" /tmp/proxy.log || true')
-    compose exec -T --detach proxy sh -c "prox-em-all -c ${1:-/test/config.yaml} >> /tmp/proxy.log 2>&1"
+    compose exec -T --detach proxy sh -c "${2:-} prox-em-all -c ${1:-/test/config.yaml} >> /tmp/proxy.log 2>&1"
     for _ in $(seq 50); do
         [ "$(in_proxy 'grep -ci "installed iptables rules" /tmp/proxy.log || true')" -gt "$installs" ] && return
         sleep 0.2
@@ -65,6 +66,15 @@ expect_route() {
     fi
 }
 
+# expect_https NAME URL CA BODY
+# Fetches URL from the client container with the placeholder token, trusting only the
+# certificates signed by CA (a file of tls/), and checks the body of the answer.
+expect_https() {
+    body=$(compose exec -T client curl -sS --max-time 5 --cacert "/test/tls/$3" \
+        -H 'Authorization: Bearer PLACEHOLDER_TOKEN' "$2" 2>&1) || true
+    if [ "$body" = "$4" ]; then pass "$1"; else fail "$1: expected '$4', got '$body'"; fi
+}
+
 compose up --detach --build --wait >/dev/null
 in_proxy 'ip route add 10.99.0.0/24 dev eth0'
 in_proxy 'echo "nameserver 10.213.0.30" > /etc/resolv.conf'
@@ -77,6 +87,7 @@ start_proxy
 # Connections routed through the proxy host, DNS queries included.
 expect_route "routed: hostname rule via HTTP proxy" client http://web1.test/ web1 web1 10.213.0.20
 expect_route "routed: IP rule goes direct from the proxy" client http://10.99.0.11/ web2 web2 10.213.0.2
+expect_https "without credentials: HTTPS is not intercepted" https://secure.test/ server-ca.crt denied
 # Connections opened on the proxy host itself.
 expect_route "IP rule goes direct" proxy http://10.99.0.11/ web2 web2 10.213.0.2
 expect_route "CIDR rule via SOCKS5 proxy" proxy http://10.99.0.12/ web3 web3 10.213.0.21
@@ -101,6 +112,17 @@ start_proxy
 stop_proxy KILL
 check "-cleanup removes the rules left by a crash" \
     'prox-em-all -cleanup && ! iptables-save | grep -Eq "PROX_EM_ALL|REDIRECT|--mark"'
+
+# Credentials, as systemd provides them, for secure.test only. other.test has the same address.
+# The proxy trusts the HTTPS server's CA, the client trusts the interception CA for secure.test.
+start_proxy /test/config.yaml "CREDENTIALS_DIRECTORY=/test/credentials SSL_CERT_FILE=/test/tls/server-ca.crt"
+expect_https "credentials: placeholder replaced, through an HTTP proxy" https://secure.test/ interception-ca.crt authorized
+check "credentials: the intercepted connection followed its rule" \
+    'grep "intercepted connection" /tmp/proxy.log | grep -q "rule=secure-http"'
+expect_https "credentials: other server on the same address is not intercepted" https://other.test/ server-ca.crt denied
+check "credentials: debug endpoint counts replacements" \
+    'wget -q -T 5 -O- http://127.0.0.1:6060/debug/vars | grep -q "\"credentials\": {\"intercepted\": 1, \"replaced\": 1}"'
+stop_proxy TERM
 
 # Listening on 127.0.0.1, only the traffic of the proxy host is redirected. The listen port is
 # also the port of the HTTP upstream proxy, which the proxy must still be able to reach.

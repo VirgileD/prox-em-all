@@ -19,12 +19,13 @@ services:
     cap_add: [NET_ADMIN]
     sysctls: { net.ipv4.ip_forward: 1, net.ipv4.conf.all.send_redirects: 0 }
     entrypoint: ["tail", "-f", "/dev/null"]
-    volumes: ["./config.yaml:/test/config.yaml:ro"]
+    volumes: ["./config.yaml:/test/config.yaml:ro", "./credentials:/test/credentials:ro", "./tls:/test/tls:ro"]
     networks: { test: { ipv4_address: 10.213.0.2 } }
 
   client: # routes the remote network, DNS server included, through the proxy container
     <<: *web
     command: ["sh", "-c", "ip route add 10.99.0.0/24 via 10.213.0.2 && echo 'nameserver 10.99.0.30' > /etc/resolv.conf && exec tail -f /dev/null"]
+    volumes: ["./tls:/test/tls:ro"]
     networks: { test: { ipv4_address: 10.213.0.3 } }
 
   web1: # reached by hostname, through the HTTP proxy
@@ -42,6 +43,12 @@ services:
     command: ["sh", "-c", "ip addr add 10.99.0.12/32 dev eth0 && mkdir -p /www && echo web3 > /www/index.html && exec httpd -f -v -p 80 -h /www"]
     networks: { test: { ipv4_address: 10.213.0.12 } }
 
+  web4: # HTTPS server for secure.test and other.test, answering "authorized" to the real token only
+    <<: *web
+    command: ["sh", "-c", "ip addr add 10.99.0.13/32 dev eth0 && exec nginx -c /etc/web4/nginx.conf"]
+    volumes: ["./web4-nginx.conf:/etc/web4/nginx.conf:ro", "./tls:/etc/web4/tls:ro"]
+    networks: { test: { ipv4_address: 10.213.0.13 } }
+
   httpproxy:
     <<: *web
     command: ["sh", "-c", "ip route add 10.99.0.0/24 dev eth0 && exec tinyproxy -d -c /etc/tinyproxy/test.conf"]
@@ -58,7 +65,7 @@ services:
 
   dns:
     <<: *web
-    command: ["sh", "-c", "ip addr add 10.99.0.30/32 dev eth0 && exec dnsmasq -k --no-resolv --log-queries --log-facility=- --local=/test/ --host-record=web1.test,10.99.0.10"]
+    command: ["sh", "-c", "ip addr add 10.99.0.30/32 dev eth0 && exec dnsmasq -k --no-resolv --log-queries --log-facility=- --local=/test/ --host-record=web1.test,10.99.0.10 --host-record=secure.test,10.99.0.13 --host-record=other.test,10.99.0.13"]
     networks: { test: { ipv4_address: 10.213.0.30 } }
 
 networks:

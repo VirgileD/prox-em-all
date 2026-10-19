@@ -10,10 +10,12 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/VirgileD/prox-em-all/internal/credentials"
 	"github.com/VirgileD/prox-em-all/internal/hostcache"
 	"github.com/VirgileD/prox-em-all/internal/rules"
 )
@@ -35,6 +37,10 @@ type Server struct {
 	// RelayRedirects makes the server relay a 3xx answer from an HTTP proxy
 	// to the client, instead of trying the next proxy.
 	RelayRedirects bool
+
+	// Injector, when set, replaces the credentials in the requests to the
+	// servers it intercepts.
+	Injector *credentials.Injector
 }
 
 // Serve handles the connections accepted on listener until it is closed.
@@ -69,31 +75,58 @@ func (s *Server) handle(client *net.TCPConn) {
 	log = log.With("destination", destination, "hostname", hostname)
 
 	rule := rules.Match(s.Rules, destination.Addr(), hostname)
-	switch {
-	case rule == nil:
-		s.forwardDirectly(log, client, destination)
-	case len(rule.Proxies) == 0:
-		s.forwardDirectly(log.With("rule", rule.Name), client, destination)
-	default:
-		s.forwardThroughProxies(log.With("rule", rule.Name), client, destination, hostname, rule.Proxies)
+	if rule != nil {
+		log = log.With("rule", rule.Name)
 	}
+
+	// The ClientHello tells whether the connection is to a server whose
+	// credentials are replaced. It is read before connecting, and forwarded after.
+	var hello credentials.ClientHello
+	if s.Injector != nil && slices.Contains(s.Injector.Ports(), destination.Port()) {
+		hello = credentials.ReadClientHello(client)
+	}
+
+	upstream, upstreamReader := s.connect(log, client, destination, hostname, rule)
+	if upstream == nil {
+		return
+	}
+	defer upstream.Close()
+
+	if s.Injector != nil && s.Injector.Intercepts(hello.ServerName, destination.Port()) {
+		s.Injector.Intercept(log.With("server", hello.ServerName), client, hello, upstream, upstreamReader, destination.Port())
+		return
+	}
+	if _, err := upstream.Write(hello.Raw); err != nil {
+		log.Warn("cannot forward the start of the connection", "error", err)
+		return
+	}
+	pipe(client, upstream, upstreamReader)
 }
 
-func (s *Server) forwardDirectly(log *slog.Logger, client *net.TCPConn, destination netip.AddrPort) {
+// connect opens a connection to destination as rule says: directly, or
+// through its proxies. Data from the connection must be read from the
+// returned reader. It returns nil when no connection could be opened.
+func (s *Server) connect(log *slog.Logger, client *net.TCPConn, destination netip.AddrPort, hostname string, rule *rules.Rule) (*net.TCPConn, io.Reader) {
+	if rule == nil || len(rule.Proxies) == 0 {
+		return s.connectDirectly(log, destination)
+	}
+	return s.connectThroughProxies(log, client, destination, hostname, rule.Proxies)
+}
+
+func (s *Server) connectDirectly(log *slog.Logger, destination netip.AddrPort) (*net.TCPConn, io.Reader) {
 	upstream, err := s.dialTCP(destination.String())
 	if err != nil {
 		log.Warn("direct connection failed", "error", err)
 		stats.Add("failed", 1)
-		return
+		return nil, nil
 	}
-	defer upstream.Close()
 	log.Debug("connected directly")
 	stats.Add("direct", 1)
-	pipe(client, upstream, upstream)
+	return upstream, upstream
 }
 
-// forwardThroughProxies tries the proxies in turn until one opens a tunnel to the destination.
-func (s *Server) forwardThroughProxies(log *slog.Logger, client *net.TCPConn, destination netip.AddrPort, hostname string, proxies []*url.URL) {
+// connectThroughProxies tries the proxies in turn until one opens a tunnel to the destination.
+func (s *Server) connectThroughProxies(log *slog.Logger, client *net.TCPConn, destination netip.AddrPort, hostname string, proxies []*url.URL) (*net.TCPConn, io.Reader) {
 	// Proxies are given the hostname when it is known, so that their own
 	// hostname-based policies apply.
 	target := destination.String()
@@ -111,20 +144,19 @@ func (s *Server) forwardThroughProxies(log *slog.Logger, client *net.TCPConn, de
 			log.Info("relaying redirection from proxy", "status", redirect.status)
 			stats.Add("redirected", 1)
 			_, _ = client.Write(redirect.response)
-			return
+			return nil, nil
 		}
 		if err != nil {
 			log.Warn("proxy connection failed", "error", err)
 			continue
 		}
-		defer upstream.Close()
 		log.Debug("connected through proxy")
 		stats.Add("proxied", 1)
-		pipe(client, upstream, upstreamReader)
-		return
+		return upstream, upstreamReader
 	}
 	log.Warn("all proxies failed, closing connection")
 	stats.Add("failed", 1)
+	return nil, nil
 }
 
 // pipe copies data between client and upstream in both directions until both

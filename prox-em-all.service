@@ -1,0 +1,18 @@
+# systemd unit for prox-em-all, to install as /etc/systemd/system/prox-em-all.service:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now prox-em-all
+[Unit]
+Description=prox-em-all transparent proxy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/prox-em-all -c /etc/prox-em-all/config.yaml
+# Removes the iptables rules if prox-em-all crashed.
+ExecStopPost=/usr/local/bin/prox-em-all -cleanup
+Restart=on-failure
+# Credentials replaced in requests, encrypted with systemd-creds (see credentials.example.yaml).
+# systemd decrypts them for the service only. Remove this line to leave requests unchanged.
+LoadCredentialEncrypted=credentials:/etc/prox-em-all/credentials.cred
+
+[Install]
+WantedBy=multi-user.target
