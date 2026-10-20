@@ -12,8 +12,24 @@ Optionally, for configured HTTPS servers, it intercepts TLS and replaces placeho
 request headers with real ones from a systemd-encrypted credentials file.
 README.md documents behaviour and configuration; keep it in sync with the code.
 
-The owner's priority: **code that is simple to read and maintain**. Prefer plain, explicit code over
-clever or generic solutions, even if slightly slower. Standard library first; avoid new dependencies.
+## Code principles
+
+The owner's priority is **code that is simple to read and maintain**. Simple beats smart.
+
+- Prefer plain, explicit code over clever or generic solutions, even if slightly slower or a little
+  repetitive. No abstraction until there is a real second use for it.
+- Do **not** follow the "accept interfaces everywhere" Go habit: use concrete types. Introduce an
+  interface only when there is a real need for several implementations. For tests, replace
+  root-only functions through struct fields (see Conventions) rather than interfaces.
+- Names carry the meaning: choose precise, descriptive names for packages, types, functions,
+  variables and constants so that the code reads without comments. Rename rather than explain a
+  bad name with a comment.
+- Comments where they are needed, not more: explain *why* (a non-obvious decision, a kernel or
+  protocol quirk, a security reason), not *what* the code already says. Exported identifiers get a
+  short doc comment.
+- Small functions with one job, early returns, errors wrapped with context (`fmt.Errorf("...: %w", err)`).
+- Standard library first; avoid new dependencies.
+- Keep changes focused: no unrelated refactoring or reformatting in a change.
 
 ## Commands
 
@@ -32,8 +48,7 @@ docker run --rm -v "$PWD":/src -w /src --user "$(id -u):$(id -g)" -e HOME=/tmp -
   or `cmd/`. Its test certificates in `test/integration/tls/` are fixtures, not secrets. It never
   touches host iptables. `VERBOSE=1` prints logs.
 - `make image`: Docker image `prox-em-all`, version from `git describe`.
-
-Never run the binary directly on the host outside a container: it rewrites the host's iptables.
+- CI (`.github/workflows/ci.yml`) runs lint, test, build and the integration test on every push.
 
 ## Layout
 
@@ -77,3 +92,14 @@ Never run the binary directly on the host outside a container: it rewrites the h
 - Security-sensitive: hostnames from DNS are untrusted input (see README "Security considerations").
 - Commit messages: conventional prefix (`feat:`, `fix:`, `refactor:`, `test:`, `build:`, `docs:`)
   and a body explaining why.
+
+## Safety rules — read before acting
+
+- **Never run the binary directly on the host** outside a container: it rewrites the host's
+  iptables. Use the integration test or a container to exercise it.
+- **Secrets:** never print, log or commit secret values (proxy credentials included).
+- **Destructive operations** (deleting branches, tags, releases, images, rewriting history) need an
+  explicit go-ahead each time; a previous approval does not carry over.
+- **No force-push** to shared branches (`main`).
+- **Admin / bypass merges (`gh pr merge --admin`) need an explicit go-ahead for each PR**, given
+  after its checks are green. Never merge several PRs in a single command or loop.
