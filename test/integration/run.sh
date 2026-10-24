@@ -96,6 +96,11 @@ expect_route "CIDR rule via SOCKS5 proxy" proxy http://10.99.0.12/ web3 web3 10.
 in_proxy 'wget -q -T 3 -O- http://127.0.0.1:3129/ >/dev/null 2>&1; echo x | nc -u -w 1 127.0.0.1 3129; sleep 1'
 check "traffic sent straight to the listen port does not loop" \
     'fds=$(ls /proc/$(pgrep prox-em-all)/fd | wc -l); echo "prox-em-all has $fds open files"; [ "$fds" -lt 30 ]'
+# Listening on 0.0.0.0 must not expose the proxy: traffic sent straight to the listen port from
+# the network is dropped, before the proxy sees it.
+compose exec -T client sh -c 'wget -q -T 2 -O- http://10.213.0.2:3129/ >/dev/null 2>&1; echo x | nc -u -w 1 10.213.0.2 3129' || true
+check "traffic sent straight to the listen port from the network is dropped" \
+    'iptables -t filter -L PROX_EM_ALL_INPUT -v -n -x | awk "/DROP/ && \$1 > 0 { n++ } END { exit n != 2 }"'
 check "debug endpoint serves connection stats" \
     'wget -q -T 5 -O- http://127.0.0.1:6060/debug/vars | grep -q "\"connections\""'
 

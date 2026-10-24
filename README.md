@@ -226,6 +226,9 @@ To also proxy the traffic of hosts using this host as their gateway, enable IP f
 connections are redirected to the address of the interface they arrive on. With `127.0.0.1`,
 routed traffic, such as the traffic of Docker containers on bridge networks, is left untouched.
 
+The listen port only accepts redirected traffic: connections and datagrams sent straight to it, from
+the network or from this host, are dropped.
+
 ### On WSL2 with mirrored networking
 
 In mirrored networking mode, WSL2 shares `localhost` with Windows: its routing rules send TCP and

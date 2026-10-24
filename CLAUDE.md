@@ -74,7 +74,8 @@ docker run --rm -v "$PWD":/src -w /src --user "$(id -u):$(id -g)" -e HOME=/tmp -
 - `internal/netfilter`: iptables rules in `PROX_EM_ALL_*` chains (installed idempotently, removable
   without the config; `iptables_test.go` lists them), `Dialer` setting SO_MARK, original destination
   via SO_ORIGINAL_DST (TCP) and conntrack over netlink (DNS), local networks from interface addresses.
-  The filter OUTPUT REJECT rules stop the proxy from connecting to its own listen port (loops).
+  The filter INPUT rules accept DNAT'd traffic to the listen port and drop the rest; the filter OUTPUT
+  REJECT rules stop the proxy from connecting to its own listen port (loops).
   `loopback.go`: optional `ip rule`s (`wslMirroredNetworking`) keeping traffic to 127.0.0.1:listenPort
   on Linux under WSL2 mirrored networking, which otherwise routes 127.0.0.1 through Windows.
 

@@ -136,10 +136,14 @@ func (r Redirect) rules(table, chain string) [][]string {
 		return r.redirectRules()
 
 	case "filter INPUT":
-		// Accept redirected traffic even if the firewall would otherwise drop it.
+		// Accept redirected traffic even if the firewall would otherwise drop
+		// it, and drop traffic sent straight to the listen port: listening on
+		// 0.0.0.0 must not expose the proxy to the network.
 		return [][]string{
 			{"-p", "tcp", "--dport", listenPort, "-m", "conntrack", "--ctstate", "DNAT", "-j", "ACCEPT"},
 			{"-p", "udp", "--dport", listenPort, "-m", "conntrack", "--ctstate", "DNAT", "-j", "ACCEPT"},
+			{"-p", "tcp", "--dport", listenPort, "-j", "DROP"},
+			{"-p", "udp", "--dport", listenPort, "-j", "DROP"},
 		}
 
 	case "filter OUTPUT":

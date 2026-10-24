@@ -30,6 +30,8 @@ func TestRedirectRules(t *testing.T) {
 		"filter INPUT": {
 			"-p tcp --dport 3129 -m conntrack --ctstate DNAT -j ACCEPT",
 			"-p udp --dport 3129 -m conntrack --ctstate DNAT -j ACCEPT",
+			"-p tcp --dport 3129 -j DROP",
+			"-p udp --dport 3129 -j DROP",
 		},
 		"filter OUTPUT": {
 			"-p tcp --dport 3129 -m addrtype --dst-type LOCAL -m mark --mark 5 -j REJECT",
