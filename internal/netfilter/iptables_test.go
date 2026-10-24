@@ -53,6 +53,34 @@ func TestRoutedTrafficIsOnlyRedirectedWhenRequested(t *testing.T) {
 	}
 }
 
+func TestRoutedTrafficIsRedirectedFromListedInterfacesOnly(t *testing.T) {
+	r := Redirect{
+		ListenPort: 3129,
+		ProxyPorts: []uint16{443},
+		Mark:       5,
+		NoRedirect: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+		Routed:     true,
+		Interfaces: []string{"docker0", "br-+"},
+	}
+	want := []string{
+		"-i docker0 -p udp --dport 53 -j REDIRECT --to-ports 3129",
+		"-i docker0 -d 10.0.0.0/8 -j RETURN",
+		"-i docker0 -p tcp -m multiport --dports 443 -j REDIRECT --to-ports 3129",
+		"-i br-+ -p udp --dport 53 -j REDIRECT --to-ports 3129",
+		"-i br-+ -d 10.0.0.0/8 -j RETURN",
+		"-i br-+ -p tcp -m multiport --dports 443 -j REDIRECT --to-ports 3129",
+	}
+	if got := joinRules(r.rules("nat", "PREROUTING")); !reflect.DeepEqual(got, want) {
+		t.Errorf("nat PREROUTING rules:\n got %q\nwant %q", got, want)
+	}
+	// Local traffic is still redirected whatever its interface.
+	for _, rule := range joinRules(r.rules("nat", "OUTPUT")) {
+		if strings.Contains(rule, "-i ") {
+			t.Errorf("nat OUTPUT rule %q is limited to an interface", rule)
+		}
+	}
+}
+
 func joinRules(rules [][]string) []string {
 	var joined []string
 	for _, rule := range rules {

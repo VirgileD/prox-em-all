@@ -27,6 +27,11 @@ type Redirect struct {
 	// address of the interface it arrives on, local traffic to 127.0.0.1.
 	Routed bool
 
+	// Interfaces limits the redirection of routed traffic to the traffic
+	// arriving on these interfaces ("+" suffix: any name with that prefix).
+	// Empty: all interfaces.
+	Interfaces []string
+
 	// WSLMirrored adds the routing rules keeping the traffic redirected to
 	// 127.0.0.1 on this host in WSL2's mirrored networking mode (see loopback.go).
 	WSLMirrored bool
@@ -133,7 +138,16 @@ func (r Redirect) rules(table, chain string) [][]string {
 		if !r.Routed {
 			return nil
 		}
-		return r.redirectRules()
+		if len(r.Interfaces) == 0 {
+			return r.redirectRules()
+		}
+		var rules [][]string
+		for _, iface := range r.Interfaces {
+			for _, rule := range r.redirectRules() {
+				rules = append(rules, append([]string{"-i", iface}, rule...))
+			}
+		}
+		return rules
 
 	case "filter INPUT":
 		// Accept redirected traffic even if the firewall would otherwise drop

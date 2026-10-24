@@ -87,6 +87,7 @@ written in JSON for earlier versions are still read: JSON is valid YAML.
 | Setting | Default | Description |
 |---|---|---|
 | `listenEndpoint` | `127.0.0.1:3129` | Address and port the proxy listens on, for TCP and DNS: `127.0.0.1` to proxy the traffic of this host only, `0.0.0.0` to also proxy [routed traffic](#as-a-gateway). |
+| `redirectInterfaces` | `[]` | With `0.0.0.0`, redirect the routed traffic of these interfaces only, such as `[docker0, br-+]` for [Docker containers](#docker-containers). `+` at the end matches any name with that prefix. Empty: all interfaces. |
 | `proxyPorts` | `[80, 443]` | TCP destination ports to redirect, at most 15. |
 | `ipTableMark` | `5` | Firewall mark of the proxy's own packets. Change it if another tool on the host uses mark 5. |
 | `noProxyList` | `[]` | Networks (CIDR, such as `192.168.0.0/16`) to which TCP connections are never redirected. The networks of the host's interfaces, loopback included, are added automatically. DNS queries are redirected whatever their destination. |
@@ -225,9 +226,37 @@ To also proxy the traffic of hosts using this host as their gateway, enable IP f
 (`sysctl -w net.ipv4.ip_forward=1`) and set `listenEndpoint` to `"0.0.0.0:3129"`: routed
 connections are redirected to the address of the interface they arrive on. With `127.0.0.1`,
 routed traffic, such as the traffic of Docker containers on bridge networks, is left untouched.
+Set `redirectInterfaces` to redirect only the traffic arriving on some interfaces.
 
 The listen port only accepts redirected traffic: connections and datagrams sent straight to it, from
 the network or from this host, are dropped.
+
+### Docker containers
+
+A container on a bridge network has its own network namespace: its traffic enters the host through
+the bridge (`docker0`, or `br-<id>` for Compose and user-defined networks) as routed traffic, not as
+traffic of a local process. To proxy it, listen on all addresses and list the bridges:
+
+```yaml
+listenEndpoint: 0.0.0.0:3129
+redirectInterfaces: [docker0, br-+]   # br-+ also covers the networks created later
+```
+
+Containers using the host's network (`--network host`) and rootless Docker or Podman containers
+open their connections from the host itself: they are proxied with `127.0.0.1` already.
+
+- **Docker Desktop** runs containers in a separate virtual machine, whose traffic never reaches the
+  host's iptables: it cannot be proxied. Docker Engine installed on the host (or in the WSL2
+  distribution) works.
+- **DNS on the default bridge**: containers use the host's DNS servers, but when the host uses a
+  local resolver (such as systemd-resolved, `127.0.0.53`), Docker gives them `8.8.8.8` and
+  `8.8.4.4` instead. The queries are redirected, then forwarded to these servers, which some
+  networks block. Set `"dns"` in `/etc/docker/daemon.json` to the network's DNS servers.
+- **DNS on user-defined networks**: Docker's embedded DNS server (`127.0.0.11`) sends the queries
+  for external names from the container's network namespace, through the bridge: they are
+  redirected, and hostname rules apply.
+- Kubernetes and other container runtimes work the same way, with their own interface names, such
+  as `cni0` or `cali+`.
 
 ### On WSL2 with mirrored networking
 

@@ -137,6 +137,18 @@ expect_route "local mode: hostname rule via a proxy using the listen port number
 expect_route "local mode: routed traffic is not redirected" client http://10.99.0.11/ web2 web2 10.213.0.3
 stop_proxy TERM
 
+# redirectInterfaces limits the redirection of routed traffic to the listed interfaces. The
+# client's traffic arrives on the proxy container's eth0.
+in_proxy "echo 'redirectInterfaces: [eth0]' | cat /test/config.yaml - > /tmp/eth0.yaml"
+start_proxy /tmp/eth0.yaml
+expect_route "listed interface: routed hostname rule via HTTP proxy" client http://web1.test/ web1 web1 10.213.0.20
+stop_proxy TERM
+in_proxy "echo 'redirectInterfaces: [docker+]' | cat /test/config.yaml - > /tmp/docker.yaml"
+start_proxy /tmp/docker.yaml
+expect_route "unlisted interface: routed traffic is not redirected" client http://10.99.0.11/ web2 web2 10.213.0.3
+expect_route "unlisted interface: local traffic is still redirected" proxy http://web1.test/ web1 web1 10.213.0.20
+stop_proxy TERM
+
 # WSL2's mirrored networking mode routes TCP and UDP to 127.0.0.1 through Windows, with rules
 # placed before the "local" table's. Simulate it by sending 127.0.0.1 nowhere.
 in_proxy 'ip rule add pref 2 lookup local && ip rule del pref 0 lookup local'

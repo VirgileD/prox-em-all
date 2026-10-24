@@ -23,6 +23,7 @@ func TestParseAppliesDefaults(t *testing.T) {
 func TestParseAllSettings(t *testing.T) {
 	cfg, err := Parse([]byte(`
 listenEndpoint: 0.0.0.0:4000
+redirectInterfaces: [docker0, br-+]
 proxyPorts: [80, 8080]
 ipTableMark: 42
 noProxyList: [192.168.0.0/16]
@@ -40,6 +41,7 @@ rules:
 	}
 	want := Config{
 		ListenEndpoint:           netip.MustParseAddrPort("0.0.0.0:4000"),
+		RedirectInterfaces:       []string{"docker0", "br-+"},
 		ProxyPorts:               []uint16{80, 8080},
 		IPTableMark:              42,
 		NoProxyList:              []netip.Prefix{netip.MustParsePrefix("192.168.0.0/16")},
@@ -84,6 +86,12 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 		{"listen on IPv6", "listenEndpoint: '[::1]:3129'", "listenEndpoint must be"},
 		{"listen on a specific address", "listenEndpoint: 192.168.1.10:3129", "listenEndpoint must be"},
 		{"listen on port 0", "listenEndpoint: 127.0.0.1:0", "listenEndpoint must be"},
+		{"interfaces with local listen", "redirectInterfaces: [docker0]", "needs listenEndpoint"},
+		{"empty interface name", "listenEndpoint: 0.0.0.0:3129\nredirectInterfaces: ['']", "invalid interface name"},
+		{"interface name too long", "listenEndpoint: 0.0.0.0:3129\nredirectInterfaces: [abcdefghijklmnop]", "invalid interface name"},
+		{"interface name with a space", "listenEndpoint: 0.0.0.0:3129\nredirectInterfaces: ['eth 0']", "invalid interface name"},
+		{"interface name as an option", "listenEndpoint: 0.0.0.0:3129\nredirectInterfaces: [-j]", "invalid interface name"},
+		{"wildcard inside a name", "listenEndpoint: 0.0.0.0:3129\nredirectInterfaces: [a+b]", "invalid interface name"},
 		{"no proxy ports", "proxyPorts: []", "between 1 and 15 ports"},
 		{"port out of range", "proxyPorts: [70000]", "cannot unmarshal"},
 		{"port zero", "proxyPorts: [0]", "port 0"},
@@ -99,5 +107,13 @@ func TestParseRejectsInvalidConfig(t *testing.T) {
 				t.Errorf("got error %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestParseAcceptsInterfaceNames(t *testing.T) {
+	for _, name := range []string{"docker0", "br-+", "veth.1", "flannel_1", "abcdefghijklmno", "abcdefghijklmn+"} {
+		if _, err := Parse([]byte("listenEndpoint: 0.0.0.0:3129\nredirectInterfaces: ['" + name + "']")); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

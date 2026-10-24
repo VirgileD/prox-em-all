@@ -11,6 +11,11 @@
 #                     (needs IP forwarding: sysctl -w net.ipv4.ip_forward=1)
 listenEndpoint: 127.0.0.1:3129
 
+# With listenEndpoint 0.0.0.0, redirect only the routed traffic arriving on these interfaces, such
+# as the bridges of Docker containers. "+" at the end matches any interface whose name starts with
+# the rest, including interfaces created later. Default: [] (all interfaces)
+# redirectInterfaces: [docker0, br-+]
+
 # TCP destination ports redirected to the proxy, at most 15. Default: [80, 443]
 proxyPorts: [80, 443]
 # proxyPorts: [80, 443, 8080, 8443]    # also alternative web ports

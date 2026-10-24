@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"regexp"
 	"slices"
 
 	"go.yaml.in/yaml/v3"
@@ -21,6 +22,11 @@ type Config struct {
 	// the traffic of this host is redirected; with 0.0.0.0, the traffic routed
 	// through this host is also redirected.
 	ListenEndpoint netip.AddrPort `yaml:"listenEndpoint"`
+
+	// RedirectInterfaces, when set, limits the redirection of routed traffic
+	// to the traffic arriving on these interfaces, such as the bridges of
+	// Docker containers. A trailing "+" matches any name with that prefix.
+	RedirectInterfaces []string `yaml:"redirectInterfaces"`
 
 	// ProxyPorts are the TCP destination ports redirected to the proxy.
 	ProxyPorts []uint16 `yaml:"proxyPorts"`
@@ -115,6 +121,14 @@ func (c Config) validate() error {
 	if (listenAddr != netip.MustParseAddr("127.0.0.1") && listenAddr != netip.IPv4Unspecified()) || c.ListenEndpoint.Port() == 0 {
 		return errors.New(`listenEndpoint must be "127.0.0.1:<port>" or "0.0.0.0:<port>"`)
 	}
+	if len(c.RedirectInterfaces) > 0 && listenAddr != netip.IPv4Unspecified() {
+		return errors.New(`redirectInterfaces needs listenEndpoint "0.0.0.0:<port>": redirected traffic arrives on the address of its interface`)
+	}
+	for _, name := range c.RedirectInterfaces {
+		if !interfaceName.MatchString(name) {
+			return fmt.Errorf("redirectInterfaces: invalid interface name %q", name)
+		}
+	}
 	// iptables' multiport match accepts at most 15 ports.
 	if len(c.ProxyPorts) == 0 || len(c.ProxyPorts) > 15 {
 		return errors.New("proxyPorts must list between 1 and 15 ports")
@@ -132,3 +146,8 @@ func (c Config) validate() error {
 	}
 	return nil
 }
+
+// interfaceName matches the interface names iptables accepts with -i: at most
+// 15 characters (IFNAMSIZ - 1), optionally ending with the "+" wildcard. A
+// name must start with a letter or a digit, so that it can never be read as an option.
+var interfaceName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$|^[A-Za-z0-9][A-Za-z0-9._-]{0,13}\+$`)

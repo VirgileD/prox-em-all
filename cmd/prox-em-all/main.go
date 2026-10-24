@@ -142,6 +142,7 @@ func run(configPath string) error {
 		Mark:        cfg.IPTableMark,
 		NoRedirect:  append(cfg.NoProxyList, localNetworks...),
 		Routed:      cfg.ListenEndpoint.Addr().IsUnspecified(),
+		Interfaces:  cfg.RedirectInterfaces,
 		WSLMirrored: cfg.WSLMirroredNetworking,
 	}
 	if err := netfilter.Install(redirect); err != nil {
@@ -149,7 +150,7 @@ func run(configPath string) error {
 	}
 	defer removeIPTablesRules()
 	slog.Info("installed iptables rules", "listen", cfg.ListenEndpoint, "ports", redirect.ProxyPorts,
-		"noRedirect", redirect.NoRedirect, "routed", redirect.Routed, "wslMirrored", redirect.WSLMirrored, "rules", len(routingRules))
+		"noRedirect", redirect.NoRedirect, "routed", redirect.Routed, "interfaces", redirect.Interfaces, "wslMirrored", redirect.WSLMirrored, "rules", len(routingRules))
 
 	select {
 	case <-ctx.Done():
