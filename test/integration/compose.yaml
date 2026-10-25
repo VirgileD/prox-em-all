@@ -70,5 +70,8 @@ services:
 
 networks:
   test:
+    # Not br-<id>: a prox-em-all running on the Docker host with redirectInterfaces [br-+] would
+    # redirect the test traffic, which Docker's br_netfilter passes through the host's iptables.
+    driver_opts: { com.docker.network.bridge.name: prox-em-all-it }
     ipam:
       config: [{ subnet: 10.213.0.0/24 }]
