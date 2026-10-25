@@ -15,6 +15,10 @@ import (
 // dnsPort is the destination port of the DNS queries redirected to the proxy.
 const dnsPort = 53
 
+// ownConntrackZone is the connection tracking zone of the proxy's own outgoing
+// packets (see the raw OUTPUT rule).
+const ownConntrackZone = "1"
+
 // Redirect describes the traffic redirected to the proxy.
 type Redirect struct {
 	ListenPort uint16         // port the proxy listens on, for TCP and DNS
@@ -46,6 +50,7 @@ var hooks = []struct{ table, chain string }{
 	{"nat", "PREROUTING"}, // traffic routed through this host
 	{"filter", "INPUT"},
 	{"filter", "OUTPUT"},
+	{"raw", "OUTPUT"},
 }
 
 const chainPrefix = "PROX_EM_ALL_"
@@ -168,6 +173,15 @@ func (r Redirect) rules(table, chain string) [][]string {
 			{"-p", "tcp", "--dport", listenPort, "-m", "addrtype", "--dst-type", "LOCAL", "-m", "mark", "--mark", mark, "-j", "REJECT"},
 			{"-p", "udp", "--dport", listenPort, "-m", "addrtype", "--dst-type", "LOCAL", "-m", "mark", "--mark", mark, "-j", "REJECT"},
 		}
+
+	case "raw OUTPUT":
+		// The proxy forwards each DNS query from a new socket, whose random
+		// source port may be the one of a client's recent query to the same
+		// server. That query's connection tracking entry, redirected to the
+		// listen port, would then take the proxy's query for its own and send
+		// it to the listen port. A zone of their own, in the original direction
+		// only, keeps the proxy's packets apart; their replies still match.
+		return [][]string{{"-m", "mark", "--mark", mark, "-j", "CT", "--zone-orig", ownConntrackZone}}
 	}
 	return nil
 }

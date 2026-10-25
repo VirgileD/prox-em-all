@@ -101,6 +101,12 @@ check "traffic sent straight to the listen port does not loop" \
 compose exec -T client sh -c 'wget -q -T 2 -O- http://10.213.0.2:3129/ >/dev/null 2>&1; echo x | nc -u -w 1 10.213.0.2 3129' || true
 check "traffic sent straight to the listen port from the network is dropped" \
     'iptables -t filter -L PROX_EM_ALL_INPUT -v -n -x | awk "/DROP/ && \$1 > 0 { n++ } END { exit n != 2 }"'
+# The proxy forwards each DNS query from a new socket, whose random source port can be the port of
+# a recent client query to the same server, still in the connection tracking table. Its query must
+# not be taken for that client's, and redirected to the proxy again.
+in_proxy 'for i in $(seq 300); do nslookup -timeout=1 -retry=1 web1.test 10.213.0.30 >/dev/null 2>&1; done; true'
+check "DNS queries from a port recently used by a client are forwarded" \
+    'n=$(grep -c "DNS query failed" /tmp/proxy.log); echo "$n DNS queries failed"; [ "$n" -eq 0 ]'
 check "debug endpoint serves connection stats" \
     'wget -q -T 5 -O- http://127.0.0.1:6060/debug/vars | grep -q "\"connections\""'
 

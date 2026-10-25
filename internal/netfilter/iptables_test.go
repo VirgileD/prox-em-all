@@ -37,6 +37,7 @@ func TestRedirectRules(t *testing.T) {
 			"-p tcp --dport 3129 -m addrtype --dst-type LOCAL -m mark --mark 5 -j REJECT",
 			"-p udp --dport 3129 -m addrtype --dst-type LOCAL -m mark --mark 5 -j REJECT",
 		},
+		"raw OUTPUT": {"-m mark --mark 5 -j CT --zone-orig 1"},
 	}
 	for _, hook := range hooks {
 		name := hook.table + " " + hook.chain

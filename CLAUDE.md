@@ -77,7 +77,9 @@ docker run --rm -v "$PWD":/src -w /src --user "$(id -u):$(id -g)" -e HOME=/tmp -
   `Redirect.Interfaces` (config `redirectInterfaces`) limits nat PREROUTING to some interfaces
   (`-i` on each rule), e.g. Docker bridges. The filter INPUT rules accept DNAT'd traffic to the listen
   port and drop the rest; the filter OUTPUT REJECT rules stop the proxy from connecting to its own
-  listen port (loops).
+  listen port (loops). The raw OUTPUT rule puts the proxy's own packets in conntrack zone 1 (original
+  direction), so a forwarded DNS query never matches a client's redirected entry that has the same
+  random source port.
   `loopback.go`: optional `ip rule`s (`wslMirroredNetworking`) keeping traffic to 127.0.0.1:listenPort
   on Linux under WSL2 mirrored networking, which otherwise routes 127.0.0.1 through Windows.
 
