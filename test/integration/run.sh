@@ -110,6 +110,15 @@ check "DNS queries from a port recently used by a client are forwarded" \
 check "debug endpoint serves connection stats" \
     'wget -q -T 5 -O- http://127.0.0.1:6060/debug/vars | grep -q "\"connections\""'
 
+# Connection tracking entries outlive the rules that created them. Once the proxy stopped, those of
+# the queries above must not send queries reusing their source port to the listen port. Once it
+# started again, those of the queries below must not let queries reusing their port bypass it:
+# the hostname check after the restart would fail.
+stop_proxy TERM
+check "DNS queries sent right after the proxy stopped are answered" \
+    'f=0; for i in $(seq 50); do nslookup -timeout=1 -retry=1 web1.test 10.213.0.30 >/dev/null 2>&1 || f=$((f+1)); done; echo "$f DNS queries failed"; [ "$f" -eq 0 ]'
+start_proxy
+
 stop_proxy KILL
 start_proxy
 check "restart after a crash replaces leftover rules instead of duplicating them" \

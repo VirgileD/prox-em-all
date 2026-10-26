@@ -17,7 +17,7 @@ const dnsPort = 53
 
 // ownConntrackZone is the connection tracking zone of the proxy's own outgoing
 // packets (see the raw OUTPUT rule).
-const ownConntrackZone = "1"
+const ownConntrackZone = 1
 
 // Redirect describes the traffic redirected to the proxy.
 type Redirect struct {
@@ -76,6 +76,11 @@ func Install(r Redirect) error {
 			return errors.Join(err, remove(ipt))
 		}
 	}
+	// A query redirected between the rules and this deletion loses its entry,
+	// and is not answered: its client asks again.
+	if err := forgetClientDNSQueries(); err != nil {
+		return errors.Join(err, remove(ipt))
+	}
 	return nil
 }
 
@@ -98,7 +103,8 @@ func (r Redirect) install(ipt *iptables.IPTables, table, chain string) error {
 	return ipt.Insert(table, chain, 1, "-j", ownChain)
 }
 
-// Remove deletes the rules added by Install, loopback routing rules included. There is nothing to do if none are installed.
+// Remove deletes the rules added by Install, loopback routing rules included.
+// There is nothing to do if none are installed.
 func Remove() error {
 	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
 	if err != nil {
@@ -124,6 +130,7 @@ func remove(ipt *iptables.IPTables) error {
 			)
 		}
 	}
+	errs = append(errs, forgetClientDNSQueries())
 	return errors.Join(errs...)
 }
 
@@ -181,7 +188,7 @@ func (r Redirect) rules(table, chain string) [][]string {
 		// listen port, would then take the proxy's query for its own and send
 		// it to the listen port. A zone of their own, in the original direction
 		// only, keeps the proxy's packets apart; their replies still match.
-		return [][]string{{"-m", "mark", "--mark", mark, "-j", "CT", "--zone-orig", ownConntrackZone}}
+		return [][]string{{"-m", "mark", "--mark", mark, "-j", "CT", "--zone-orig", strconv.Itoa(ownConntrackZone)}}
 	}
 	return nil
 }
